@@ -58,51 +58,28 @@ class PrismaStore(BaseMetadataStore):
     ######
 
     async def aget_collection_by_name(
-        self, collection_name: str, no_cache: bool = True, **kwargs
+        self, collection_name: str, no_cache: bool = True
     ) -> Optional[Collection]:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         # Fetch the collection by name
-        collection: "PrismaCollection" = await txn_mgr.collection.find_first_or_raise(
+        collection: "PrismaCollection" = await self.db.collection.find_first_or_raise(
             where={"name": collection_name}
         )
         # Validate the collection and return it
         return Collection.model_validate(collection.model_dump())
 
-    async def acreate_collection(
-        self, collection: CreateCollection, **kwargs
-    ) -> Collection:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
+    async def acreate_collection(self, collection: CreateCollection) -> Collection:
         logger.info(f"Creating collection: {collection.model_dump()}")
         collection_data = collection.model_dump()
         collection_data["embedder_config"] = json.dumps(
             collection_data["embedder_config"]
         )
-        collection: "PrismaCollection" = await txn_mgr.collection.create(
+        collection: "PrismaCollection" = await self.db.collection.create(
             data=collection_data
         )
         return Collection.model_validate(collection.model_dump())
 
-    async def aget_collections(self, **kwargs) -> List[Collection]:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
-        collections: List["PrismaCollection"] = await txn_mgr.collection.find_many(
+    async def aget_collections(self) -> List[Collection]:
+        collections: List["PrismaCollection"] = await self.db.collection.find_many(
             order={"id": "desc"},
         )
         return [Collection.model_validate(c.model_dump()) for c in collections]
@@ -112,34 +89,8 @@ class PrismaStore(BaseMetadataStore):
         return [collection.name for collection in collections]
 
     # TODO: (mnvsk97) Add association between collections and ingestion runs and delete all associated records using `includes`. See: https://prisma-client-py.readthedocs.io/en/stable/reference/operations/#unique-record
-    async def adelete_collection(
-        self, collection_name: str, include_runs=False, **kwargs
-    ):
+    async def adelete_collection(self, collection_name: str, include_runs=False):
         # Initialize a database transaction
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-
-            if include_runs:
-                deleted_runs = await txn_mgr.ingestionruns.delete_many(
-                    where={"collection_name": collection_name}
-                )
-                logger.info(f"Deleted ingestion runs for collection {collection_name}")
-
-            # Delete the collection
-            deleted_collection = await txn_mgr.collection.delete(
-                where={"name": collection_name}
-            )
-            if not deleted_collection:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Failed to delete collection {collection_name!r}. No such record found",
-                )
-
-            logger.info(f"Successfully deleted collection: {deleted_collection.name}")
-            return deleted_collection
-
         async with self.db.tx() as transaction:
             # Delete ingestion runs first if include_runs is True
             if include_runs:
@@ -164,31 +115,15 @@ class PrismaStore(BaseMetadataStore):
     ######
     # DATA SOURCE APIS
     ######
-    async def aget_data_source_from_fqn(self, fqn: str, **kwargs) -> DataSource:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
+    async def aget_data_source_from_fqn(self, fqn: str) -> DataSource:
         # Fetch the data source from the database by fqn. If not found, raise a RecordNotFoundError
-        data_source: "PrismaDataSource" = await txn_mgr.datasource.find_first_or_raise(
+        data_source: "PrismaDataSource" = await self.db.datasource.find_first_or_raise(
             where={"fqn": fqn}
         )
         # Validate the data source and return it
         return DataSource.model_validate(data_source.model_dump())
 
-    async def acreate_data_source(
-        self, data_source: CreateDataSource, **kwargs
-    ) -> DataSource:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
+    async def acreate_data_source(self, data_source: CreateDataSource) -> DataSource:
         # If metadata is not provided, remove it from the payload
         data_source_dict = data_source.model_dump(exclude_unset=True)
 
@@ -200,22 +135,15 @@ class PrismaStore(BaseMetadataStore):
             data_source_dict["metadata"] = json.dumps(data_source_dict["metadata"])
 
         # Create the data source
-        data_source: "PrismaDataSource" = await txn_mgr.datasource.create(
+        data_source: "PrismaDataSource" = await self.db.datasource.create(
             data=data_source_dict
         )
         logger.info(f"Created data source: {data_source}")
         # Validate the data source and return it
         return DataSource.model_validate(data_source.model_dump())
 
-    async def aget_data_sources(self, **kwargs) -> List[DataSource]:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
-        data_sources: List["PrismaDataSource"] = await txn_mgr.datasource.find_many(
+    async def aget_data_sources(self) -> List[DataSource]:
+        data_sources: List["PrismaDataSource"] = await self.db.datasource.find_many(
             order={"id": "desc"}
         )
         return [
@@ -227,15 +155,7 @@ class PrismaStore(BaseMetadataStore):
         self,
         collection_name: str,
         data_source_associations: List[AssociateDataSourceWithCollection],
-        **kwargs,
     ) -> Collection:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         # Get the collection by name
         collection = await self.aget_collection_by_name(collection_name)
 
@@ -244,7 +164,7 @@ class PrismaStore(BaseMetadataStore):
 
         # Fetch all data sources in a single query
         data_source_fqns = [assoc.data_source_fqn for assoc in data_source_associations]
-        data_sources = await txn_mgr.datasource.find_many(
+        data_sources = await self.db.datasource.find_many(
             where={"fqn": {"in": data_source_fqns}}
         )
         data_sources_dict = {ds.fqn: ds for ds in data_sources}
@@ -274,7 +194,7 @@ class PrismaStore(BaseMetadataStore):
         }
 
         # Update the collection with the new associated data sources
-        updated_collection = await txn_mgr.collection.update(
+        updated_collection = await self.db.collection.update(
             where={"name": collection_name},
             data={"associated_data_sources": json.dumps(associated_data_sources)},
         )
@@ -290,15 +210,8 @@ class PrismaStore(BaseMetadataStore):
         return Collection.model_validate(updated_collection.model_dump())
 
     async def aunassociate_data_source_with_collection(
-        self, collection_name: str, data_source_fqn: str, **kwargs
+        self, collection_name: str, data_source_fqn: str
     ) -> Collection:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         # Get the collection by name
         collection = await self.aget_collection_by_name(collection_name)
         # Get the existing associated data sources
@@ -318,7 +231,7 @@ class PrismaStore(BaseMetadataStore):
         }
 
         # Update the collection with the new associated data sources
-        updated_collection = await txn_mgr.collection.update(
+        updated_collection = await self.db.collection.update(
             where={"name": collection_name},
             data={
                 "associated_data_sources": json.dumps(updated_associated_data_sources)
@@ -341,14 +254,7 @@ class PrismaStore(BaseMetadataStore):
         data_sources = await self.aget_data_sources()
         return [data_source.model_dump() for data_source in data_sources]
 
-    async def adelete_data_source(self, data_source_fqn: str, **kwargs) -> None:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
+    async def adelete_data_source(self, data_source_fqn: str) -> None:
         # Fetch all collections
         collections = await self.aget_collections()
         # Check if data source is associated with any collection
@@ -370,7 +276,7 @@ class PrismaStore(BaseMetadataStore):
         # Delete the data source
         deleted_datasource: Optional[
             PrismaDataSource
-        ] = await txn_mgr.datasource.delete(where={"fqn": data_source_fqn})
+        ] = await self.db.datasource.delete(where={"fqn": data_source_fqn})
 
         if not deleted_datasource:
             raise HTTPException(
@@ -384,15 +290,9 @@ class PrismaStore(BaseMetadataStore):
     # DATA INGESTION RUN APIS
     ######
     async def acreate_data_ingestion_run(
-        self, data_ingestion_run: CreateDataIngestionRun, **kwargs
+        self, data_ingestion_run: CreateDataIngestionRun
     ) -> DataIngestionRun:
         """Create a data ingestion run in the metadata store"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
 
         run_name = (
             data_ingestion_run.collection_name
@@ -412,23 +312,16 @@ class PrismaStore(BaseMetadataStore):
         run_data = created_data_ingestion_run.model_dump()
         run_data["parser_config"] = json.dumps(run_data["parser_config"])
         data_ingestion_run: "PrismaDataIngestionRun" = (
-            await txn_mgr.ingestionruns.create(data=run_data)
+            await self.db.ingestionruns.create(data=run_data)
         )
         return DataIngestionRun.model_validate(data_ingestion_run.model_dump())
 
     async def aget_data_ingestion_run(
-        self, data_ingestion_run_name: str, no_cache: bool = False, **kwargs
+        self, data_ingestion_run_name: str, no_cache: bool = False
     ) -> Optional[DataIngestionRun]:
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         data_ingestion_run: Optional[
             "PrismaDataIngestionRun"
-        ] = await txn_mgr.ingestionruns.find_first(
+        ] = await self.db.ingestionruns.find_first(
             where={"name": data_ingestion_run_name}
         )
         logger.info(f"Data ingestion run: {data_ingestion_run}")
@@ -437,19 +330,12 @@ class PrismaStore(BaseMetadataStore):
         return None
 
     async def aget_data_ingestion_runs(
-        self, collection_name: str, data_source_fqn: str = None, **kwargs
+        self, collection_name: str, data_source_fqn: str = None
     ) -> List[DataIngestionRun]:
         """Get all data ingestion runs for a collection"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         data_ingestion_runs: List[
             "PrismaDataIngestionRun"
-        ] = await txn_mgr.ingestionruns.find_many(
+        ] = await self.db.ingestionruns.find_many(
             where={"collection_name": collection_name}, order={"id": "desc"}
         )
         return [
@@ -458,19 +344,12 @@ class PrismaStore(BaseMetadataStore):
         ]
 
     async def aupdate_data_ingestion_run_status(
-        self, data_ingestion_run_name: str, status: DataIngestionRunStatus, **kwargs
+        self, data_ingestion_run_name: str, status: DataIngestionRunStatus
     ) -> DataIngestionRun:
         """Update the status of a data ingestion run"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         updated_data_ingestion_run: Optional[
             "PrismaDataIngestionRun"
-        ] = await txn_mgr.ingestionruns.update(
+        ] = await self.db.ingestionruns.update(
             where={"name": data_ingestion_run_name}, data={"status": status}
         )
         if not updated_data_ingestion_run:
@@ -482,19 +361,12 @@ class PrismaStore(BaseMetadataStore):
         return DataIngestionRun.model_validate(updated_data_ingestion_run.model_dump())
 
     async def alog_errors_for_data_ingestion_run(
-        self, data_ingestion_run_name: str, errors: Dict[str, Any], **kwargs
+        self, data_ingestion_run_name: str, errors: Dict[str, Any]
     ) -> None:
         """Log errors for the given data ingestion run"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         updated_data_ingestion_run: Optional[
             "PrismaDataIngestionRun"
-        ] = await txn_mgr.ingestionruns.update(
+        ] = await self.db.ingestionruns.update(
             where={"name": data_ingestion_run_name},
             data={"errors": json.dumps(errors)},
         )
@@ -507,61 +379,33 @@ class PrismaStore(BaseMetadataStore):
     ######
     # RAG APPLICATION APIS
     ######
-    async def aget_rag_app(self, app_name: str, **kwargs) -> Optional[RagApplication]:
+    async def aget_rag_app(self, app_name: str) -> Optional[RagApplication]:
         """Get a RAG application from the metadata store"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         rag_app: Optional[
             "PrismaRagApplication"
-        ] = await txn_mgr.ragapps.find_first_or_raise(where={"name": app_name})
+        ] = await self.db.ragapps.find_first_or_raise(where={"name": app_name})
 
         return RagApplication.model_validate(rag_app.model_dump())
 
-    async def acreate_rag_app(self, app: RagApplication, **kwargs) -> RagApplication:
+    async def acreate_rag_app(self, app: RagApplication) -> RagApplication:
         """Create a RAG application in the metadata store"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         rag_app_data = app.model_dump()
         rag_app_data["config"] = json.dumps(rag_app_data["config"])
-        rag_app: "PrismaRagApplication" = await txn_mgr.ragapps.create(
+        rag_app: "PrismaRagApplication" = await self.db.ragapps.create(
             data=rag_app_data
         )
         return RagApplication.model_validate(rag_app.model_dump())
 
-    async def alist_rag_apps(self, **kwargs) -> List[str]:
+    async def alist_rag_apps(self) -> List[str]:
         """List all RAG applications from the metadata store"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
-        rag_apps: List["PrismaRagApplication"] = await txn_mgr.ragapps.find_many()
+        rag_apps: List["PrismaRagApplication"] = await self.db.ragapps.find_many()
         return [rag_app.name for rag_app in rag_apps]
 
-    async def adelete_rag_app(self, app_name: str, **kwargs):
+    async def adelete_rag_app(self, app_name: str):
         """Delete a RAG application from the metadata store"""
-
-        # See if function provides transaction manager from call, else revert to original functionality
-        if "transaction_manager" in kwargs:
-            txn_mgr = kwargs["transaction_manager"]
-        else:
-            txn_mgr = self.db
-
         deleted_rag_app: Optional[
             "PrismaRagApplication"
-        ] = await txn_mgr.ragapps.delete(where={"name": app_name})
+        ] = await self.db.ragapps.delete(where={"name": app_name})
         if not deleted_rag_app:
             raise HTTPException(
                 status_code=404,
