@@ -57,41 +57,45 @@ async def create_collection(
     """API to create a collection"""
     logger.info(f"Creating collection {collection.name}...")
     metadata_store_client = await get_client()
-    created_collection = await metadata_store_client.acreate_collection(
-        collection=CreateCollection(
-            name=collection.name,
-            description=collection.description,
-            embedder_config=collection.embedder_config,
+    async with metadata_store_client.tx() as txn_mgr:
+        created_collection = await metadata_store_client.acreate_collection(
+            collection=CreateCollection(
+                name=collection.name,
+                description=collection.description,
+                embedder_config=collection.embedder_config,
+            ),
+            transaction_manager=txn_mgr
         )
-    )
-    logger.info(f"Creating collection {collection.name} on vector db...")
-    VECTOR_STORE_CLIENT.create_collection(
-        collection_name=collection.name,
-        embeddings=model_gateway.get_embedder_from_model_config(
-            model_name=collection.embedder_config.name
-        ),
-    )
-    logger.info(f"Created collection... {created_collection}")
-
-    if collection.associated_data_sources:
-        data_source_associations = [
-            AssociateDataSourceWithCollection(
-                data_source_fqn=data_source.data_source_fqn,
-                parser_config=data_source.parser_config,
-            )
-            for data_source in collection.associated_data_sources
-        ]
-
-        created_collection = (
-            await metadata_store_client.aassociate_data_sources_with_collection(
-                collection_name=created_collection.name,
-                data_source_associations=data_source_associations,
-            )
+        logger.info(f"Creating collection {collection.name} on vector db...")
+        VECTOR_STORE_CLIENT.create_collection(
+            collection_name=collection.name,
+            embeddings=model_gateway.get_embedder_from_model_config(
+                model_name=collection.embedder_config.name
+            ),
         )
+        logger.info(f"Created collection... {created_collection}")
 
-    return JSONResponse(
-        content={"collection": created_collection.model_dump()}, status_code=201
-    )
+        if collection.associated_data_sources:
+            data_source_associations = [
+                AssociateDataSourceWithCollection(
+                    data_source_fqn=data_source.data_source_fqn,
+                    parser_config=data_source.parser_config,
+                    transaction_manager=txn_mgr
+                )
+                for data_source in collection.associated_data_sources
+            ]
+
+            created_collection = (
+                await metadata_store_client.aassociate_data_sources_with_collection(
+                    collection_name=created_collection.name,
+                    data_source_associations=data_source_associations,
+                    transaction_manager=txn_mgr
+                )
+            )
+
+        return JSONResponse(
+            content={"collection": created_collection.model_dump()}, status_code=201
+        )
 
 
 @router.post("/associate_data_source")
